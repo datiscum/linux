@@ -1268,7 +1268,7 @@ guc_exec_queue_timedout_job(struct drm_sched_job *drm_job)
 	int err = -ETIME;
 	pid_t pid = -1;
 	int i = 0;
-	bool wedged = false, skip_timeout_check;
+	bool wedged = false, wedge_device = false, skip_timeout_check;
 
 	/*
 	 * TDR has fired before free job worker. Common if exec queue
@@ -1412,7 +1412,7 @@ trigger_reset:
 			if (q->flags & EXEC_QUEUE_FLAG_KERNEL) {
 				xe_gt_WARN(q->gt, true,
 					   "Kernel-submitted job timed out\n");
-				xe_device_declare_wedged(gt_to_xe(q->gt));
+				wedge_device = true;
 			}
 		} else if (q->flags & EXEC_QUEUE_FLAG_VM &&
 			   !exec_queue_killed(q)) {
@@ -1449,6 +1449,9 @@ trigger_reset:
 
 	/* Start fence signaling */
 	xe_hw_fence_irq_start(q->fence_irq);
+
+	if (wedge_device)
+		xe_device_declare_wedged(gt_to_xe(q->gt));
 
 	return DRM_GPU_SCHED_STAT_RESET;
 
