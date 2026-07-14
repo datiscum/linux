@@ -1715,11 +1715,12 @@ static int guc_exec_queue_init(struct xe_exec_queue *q)
 		goto err_free;
 
 	xe_exec_queue_assign_name(q, q->guc->id);
+	strscpy(ge->name, q->name, sizeof(ge->name));
 
 	err = xe_sched_init(&ge->sched, &drm_sched_ops, &xe_sched_ops,
 			    NULL, q->lrc[0]->ring.size / MAX_JOB_SIZE_BYTES, 64,
 			    timeout, guc_to_gt(guc)->ordered_wq, NULL,
-			    q->name, gt_to_xe(q->gt)->drm.dev);
+			    ge->name, gt_to_xe(q->gt)->drm.dev);
 	if (err)
 		goto err_release_id;
 
