@@ -4,31 +4,65 @@ Linux kernel
 Datiscum Linux 6.18.40 branch
 -----------------------------
 
-The ``linux-6.18.40-datiscum`` branch adds the scheduler accounting fix used
-to prevent the observed divide-by-zero panic, soft/hard lockups, RCU stalls,
-and task starvation on heavily parallel many-core systems.  It also carries
-the selected Intel Xe stability backports, including the Battlemage D3Cold
-change, and the other local kernel updates.
+The linux-6.18.40-datiscum branch adds the scheduler accounting fix used
+to prevent the observed scheduler failure on heavily parallel many-core
+systems.
 
-The patched kernel is running stably on the affected production system with
-two AMD EPYC 7643 48-Core Processors (96 physical cores in total), after the
-scheduler failures previously observed there.
+The original failure pattern included:
 
-See ``README.datiscum`` for the exact scheduler guard, Xe commit list,
-configuration, scope, and validation details.
+a scheduler divide-by-zero panic in the CFS/EEVDF accounting path,
+specifically around avg_vruntime() / scheduler weight accounting
+soft lockups
+hard lockups
+RCU stalls / RCU-preempt starvation
+task starvation
+blocked or stalled kernel workers under load
+intermittent VM hangs under KVM workloads
+
+The affected production system has two AMD EPYC 7643 48-Core Processors
+(96 physical cores in total). The patched kernel is currently running
+stably on that system after the scheduler failures previously observed
+there.
+
+The branch also carries the selected Intel Xe stability backports, including
+the Battlemage D3Cold related change, plus the other local kernel updates.
+
+For KVM / VFIO use with the Intel Xe device, the PCI runtime power policy must
+also be forced to on on this system. Leaving the device in automatic
+runtime power management can still lead to the VM hanging later, even with the
+kernel-side Xe fixes applied.
+
+Example for the affected Xe device:
+
+modprobe xe probe_display=0
+cat /sys/bus/pci/devices/0000:04:00.0/power/control
+echo on > /sys/bus/pci/devices/0000:04:00.0/power/control
+cat /sys/bus/pci/devices/0000:04:00.0/power/control
+
+Expected final state:
+
+on
+
+This keeps the PCI device powered instead of allowing automatic runtime power
+transitions while it is used for KVM passthrough.
+
+See README.datiscum for the exact scheduler guard, Xe commit list,
+configuration, scope, runtime power note, and validation details.
 
 There are several guides for kernel developers and users. These guides can
 be rendered in a number of formats, like HTML and PDF. Please read
 Documentation/admin-guide/README.rst first.
 
-In order to build the documentation, use ``make htmldocs`` or
-``make pdfdocs``.  The formatted documentation can also be read online at:
+In order to build the documentation, use make htmldocs or
+make pdfdocs. The formatted documentation can also be read online at:
 
-    https://www.kernel.org/doc/html/latest/
+https://www.kernel.org/doc/html/latest/
 
-There are various text files in the Documentation/ subdirectory,
-several of them using the reStructuredText markup notation.
+There are various text files in the Documentation/ subdirectory, several
+of them using the reStructuredText markup notation.
 
-Please read the Documentation/process/changes.rst file, as it contains the
-requirements for building and running the kernel, and information about
-the problems which may result by upgrading your kernel.
+Please read the Documentation/process/changes.rst file, as it contains
+the requirements for building and running the kernel, and information about
+the problems which may result from upgrading your kernel.
+ 
+ 
