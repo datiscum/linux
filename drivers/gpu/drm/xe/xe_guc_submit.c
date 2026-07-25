@@ -424,7 +424,7 @@ static int alloc_guc_id(struct xe_guc *guc, struct xe_exec_queue *q)
 	/* Reserve empty slots. */
 	for (i = 0; i < q->width; ++i) {
 		ret = xa_insert(&guc->submission_state.exec_queue_lookup,
-				 q->guc->id + i, NULL, GFP_KERNEL);
+				q->guc->id + i, NULL, GFP_KERNEL);
 		if (ret)
 			goto err_release;
 	}

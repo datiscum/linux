@@ -296,8 +296,9 @@ retry:
 	 */
 	if (!xe_vm_in_lr_mode(vm)) {
 		struct drm_gem_object *obj;
+		unsigned long index;
 
-		drm_exec_for_each_locked_object(exec, obj) {
+		drm_exec_for_each_locked_object(exec, index, obj) {
 			err = xe_sched_job_add_deps(job, obj->resv,
 						    DMA_RESV_USAGE_KERNEL);
 			if (err)

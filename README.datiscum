@@ -51,15 +51,21 @@ The Xe changes are kept in three reviewable groups:
   page-table error-path fixes.
 * D3Cold is disabled by default for Battlemage devices to retain the stable
   power-management behavior previously obtained through power/control=on.
-* Additional upstream fixes for the GuC steered-register allocation, purged
-  BO cursors, BO-prefetch bounds, imported dma-buf lifetime, LNL/Battlemage
-  WOPCM sizing, page-table retry state, scheduler timeline-name lifetime, and
-  GT resume failures.
+* Additional upstream fixes for the GuC steered-register allocation,
+  BO-prefetch bounds, imported dma-buf lifetime, LNL/Battlemage WOPCM sizing,
+  page-table retry state, scheduler timeline-name lifetime, and GT resume
+  failures.
 
 The additional Xe group carries upstream commits 24f60b8e9f44,
-632ecc90e1ca, 8a0fb57675be, 7bc597ce74ba, 62775525a27c, ad87e2476b3b,
-6384271ac1ac, 299bc6d50b1b, and 644673a69f2b, adapted to the Linux 6.18
-interfaces without importing later multi-queue interfaces.
+632ecc90e1ca, 7bc597ce74ba, 62775525a27c, ad87e2476b3b, 6384271ac1ac,
+299bc6d50b1b, and 644673a69f2b, adapted to the Linux 6.18 interfaces without
+importing later multi-queue interfaces.
+
+The GuC allocation fix uses bitmap_or() followed by bitmap_weight() because
+the combined bitmap_weighted_or() helper was introduced after the Linux 6.18
+branch.  Commit 8a0fb57675be is intentionally not carried: it fixes purged-BO
+state handling introduced by post-6.18 commit ad9843aac91a, so its prerequisite
+and affected behavior do not exist in Linux 6.18.
 
 Other changes and configuration
 -------------------------------
