@@ -10,8 +10,9 @@ and task starvation on heavily parallel many-core systems.  It also carries
 the selected Intel Xe stability backports, including the Battlemage D3Cold
 change, and the other local kernel updates.
 
-The patched kernel is running stably on the affected production system, a
-96-core AMD EPYC host, after the scheduler failures previously observed there.
+The patched kernel is running stably on the affected production system with
+two AMD EPYC 7643 48-Core Processors (96 physical cores in total), after the
+scheduler failures previously observed there.
 
 See ``README.datiscum`` for the exact scheduler guard, Xe commit list,
 configuration, scope, and validation details.
