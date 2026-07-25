@@ -98,6 +98,9 @@ install_maint_scripts () {
 			hookdirs="\$hookdirs \$dir/${script}.d"
 		done
 		hookdirs="\${hookdirs# }"
+		if [ -d "/lib/modules/${KERNELRELEASE}" ]; then
+			depmod -a "${KERNELRELEASE}" || true
+		fi
 		test -n "\$hookdirs" && run-parts --arg="${KERNELRELEASE}" --arg="/${installed_image_path}" \$hookdirs
 		exit 0
 		EOF
