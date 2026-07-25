@@ -32,6 +32,12 @@ heavily parallel hosts with many CPU cores, where scheduler failures have a
 large system-wide impact.  It addresses this specific accounting failure; it
 is not a claim to fix unrelated causes of lockups or RCU stalls.
 
+The affected production machine is a 96-core AMD EPYC system.  Before the
+scheduler patches it exhibited the failures described above; with the patched
+kernel it has operated stably without those scheduler crashes and lockups.
+This is the observed result on that system rather than a general guarantee
+for unrelated hardware or failure paths.
+
 The scheduler series additionally prevents try_steal_cookie() from migrating
 an rq->donor task that is still the active proxy-execution context.
 
