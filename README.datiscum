@@ -1,0 +1,79 @@
+Datiscum Linux 6.18.40
+======================
+
+This branch is based on the official Linux v6.18.40 tag and carries the
+kernel changes used by the datiscum systems.  The changes are split into
+separate Git commits so that every patch group can be audited or replaced by
+its stable upstream equivalent in later kernel releases.
+
+Scheduler stability
+-------------------
+
+The scheduler series contains the upstream fair-scheduler overflow fixes:
+
+* 4823725d9d1d ("sched/fair: Increase weight bits for avg_vruntime")
+* 556146ce5e94 ("sched/fair: Avoid overflow in enqueue_entity()")
+* 416dd8fc352b ("sched/fair: Fix overflow in vruntime_eligible()")
+
+It also contains the datiscum-specific defensive check in avg_vruntime():
+
+	if (unlikely(weight <= 0))
+		delta = curr ? entity_key(cfs_rq, curr) : 0;
+
+The fallback prevents a zero or negative divisor after inconsistent or
+wrapped weight accounting.  It deliberately continues through
+update_zero_vruntime(), avoiding both a divide-by-zero panic and an invalid
+vruntime jump.
+
+This fixes the scheduler failure path observed before these patches.  That
+failure could result in a kernel panic, soft or hard lockups, RCU stalls, or
+tasks no longer receiving CPU time.  The fix is particularly relevant to
+heavily parallel hosts with many CPU cores, where scheduler failures have a
+large system-wide impact.  It addresses this specific accounting failure; it
+is not a claim to fix unrelated causes of lockups or RCU stalls.
+
+The scheduler series additionally prevents try_steal_cookie() from migrating
+an rq->donor task that is still the active proxy-execution context.
+
+Intel Xe stability
+------------------
+
+The Xe changes are kept in three reviewable groups:
+
+* TTM and Xe buffer-object eviction, execution recovery, GuC register, and
+  page-table error-path fixes.
+* D3Cold is disabled by default for Battlemage devices to retain the stable
+  power-management behavior previously obtained through power/control=on.
+* Additional upstream fixes for the GuC steered-register allocation, purged
+  BO cursors, BO-prefetch bounds, imported dma-buf lifetime, LNL/Battlemage
+  WOPCM sizing, page-table retry state, scheduler timeline-name lifetime, and
+  GT resume failures.
+
+The additional Xe group carries upstream commits 24f60b8e9f44,
+632ecc90e1ca, 8a0fb57675be, 7bc597ce74ba, 62775525a27c, ad87e2476b3b,
+6384271ac1ac, 299bc6d50b1b, and 644673a69f2b, adapted to the Linux 6.18
+interfaces without importing later multi-queue interfaces.
+
+Other changes and configuration
+-------------------------------
+
+The branch also carries the selected builddeb, Cachy, crypto, and NTFS-Plus
+changes.  NTFS-Plus is imported from namjaejeon/linux-ntfs commit
+ca149db6b901a0d44cdd88e54047e0cd422ca70d.
+
+The exact build configuration is stored as:
+
+	arch/x86/configs/datiscum_defconfig
+
+Important settings include CONFIG_DRM_XE=m, CONFIG_NTFS_FS=m,
+CONFIG_NTFS_FS_POSIX_ACL=y, CONFIG_NTFS3_FS=m, and the local version suffix
+"-datiscum1".
+
+Validation
+----------
+
+The complete patch series was applied without rejects to a clean v6.18.40
+tree.  The resulting source files were compared byte-for-byte with the
+previously prepared local Linux 6.18.40 tree.  The only subsequent source
+cleanup removed two trailing blank lines reported by git diff --check.  No
+kernel compilation was run as part of this repository import.

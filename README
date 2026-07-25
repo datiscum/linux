@@ -1,6 +1,18 @@
 Linux kernel
 ============
 
+Datiscum Linux 6.18.40 branch
+-----------------------------
+
+The ``linux-6.18.40-datiscum`` branch adds the scheduler accounting fix used
+to prevent the observed divide-by-zero panic, soft/hard lockups, RCU stalls,
+and task starvation on heavily parallel many-core systems.  It also carries
+the selected Intel Xe stability backports, including the Battlemage D3Cold
+change, and the other local kernel updates.
+
+See ``README.datiscum`` for the exact scheduler guard, Xe commit list,
+configuration, scope, and validation details.
+
 There are several guides for kernel developers and users. These guides can
 be rendered in a number of formats, like HTML and PDF. Please read
 Documentation/admin-guide/README.rst first.
