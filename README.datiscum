@@ -32,11 +32,12 @@ heavily parallel hosts with many CPU cores, where scheduler failures have a
 large system-wide impact.  It addresses this specific accounting failure; it
 is not a claim to fix unrelated causes of lockups or RCU stalls.
 
-The affected production machine is a 96-core AMD EPYC system.  Before the
-scheduler patches it exhibited the failures described above; with the patched
-kernel it has operated stably without those scheduler crashes and lockups.
-This is the observed result on that system rather than a general guarantee
-for unrelated hardware or failure paths.
+The affected production machine uses two AMD EPYC 7643 48-Core Processors,
+for 96 physical CPU cores in total.  Before the scheduler patches it exhibited
+the failures described above; with the patched kernel it has operated stably
+without those scheduler crashes and lockups.  This is the observed result on
+that system rather than a general guarantee for unrelated hardware or failure
+paths.
 
 The scheduler series additionally prevents try_steal_cookie() from migrating
 an rq->donor task that is still the active proxy-execution context.
@@ -74,6 +75,53 @@ The exact build configuration is stored as:
 Important settings include CONFIG_DRM_XE=m, CONFIG_NTFS_FS=m,
 CONFIG_NTFS_FS_POSIX_ACL=y, CONFIG_NTFS3_FS=m, and the local version suffix
 "-datiscum1".
+
+Production tracing and debugging profile
+----------------------------------------
+
+The production configuration uses the ORC unwinder instead of frame pointers.
+The x86 Kconfig documentation estimates a 5-10 percent overall performance
+improvement for ORC compared with the frame-pointer unwinder.  ORC retains
+reliable kernel stack traces while using a few megabytes of additional runtime
+memory.
+
+The NMI/perf hard-lockup detector and the scheduler stack-end check are
+disabled.  The soft-lockup detector and hung-task detector remain enabled so
+that future scheduler or driver regressions can still be reported.
+
+General tracepoints, dynamic Ftrace, function tracing, Kprobes, Uprobes, BPF,
+BPF JIT, BTF, Perf, and KVM remain enabled.  The configuration deliberately
+does not trade away these observability and virtualization interfaces.
+
+The PARANOID_AVG scheduler feature is compiled in for targeted diagnosis but
+defaults to disabled.  KFENCE is also compiled in but has a sampling interval
+of zero, so periodic KFENCE allocation sampling is disabled.  Memory
+initialization on allocation remains enabled as security hardening for the
+container host.
+
+No additional kernel command-line option is required for this profile.
+In particular, do not add ``nmi_watchdog=1``.  An existing ``nmi_watchdog=1``,
+``delayacct``, ``slub_debug``, ``page_owner=on``, or tracing/debug boot option
+should be removed unless it is intentionally needed for a new investigation.
+
+For an older running kernel that still contains the hard-lockup detector, its
+runtime overhead can be stopped until reboot with:
+
+	sysctl -w kernel.nmi_watchdog=0
+
+The soft-lockup and hung-task detectors should remain active.  Do not set
+``kernel.ftrace_enabled=0`` because that would also remove tracing facilities
+kept for BPF and targeted diagnostics.  During normal operation,
+``current_tracer`` should be ``nop``, and the scheduler feature list should
+contain ``NO_PARANOID_AVG``:
+
+	cat /sys/kernel/tracing/current_tracer
+	grep -o 'NO_PARANOID_AVG\|PARANOID_AVG' \
+		/sys/kernel/debug/sched/features
+
+If PARANOID_AVG was enabled manually, disable it with:
+
+	echo NO_PARANOID_AVG > /sys/kernel/debug/sched/features
 
 Validation
 ----------
