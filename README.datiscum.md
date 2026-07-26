@@ -11,7 +11,7 @@ Scheduler stability
 
 The complete scheduler failure analysis, the Linux 7.1 backports, the local
 avg_vruntime() divide-by-zero guard, the proxy-execution donor protection, and
-the observed production result are documented in README.
+the observed production result are documented in [README.md](README.md).
 
 Intel Xe stability
 ------------------
