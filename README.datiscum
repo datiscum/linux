@@ -9,38 +9,9 @@ its stable upstream equivalent in later kernel releases.
 Scheduler stability
 -------------------
 
-The scheduler series contains the upstream fair-scheduler overflow fixes:
-
-* 4823725d9d1d ("sched/fair: Increase weight bits for avg_vruntime")
-* 556146ce5e94 ("sched/fair: Avoid overflow in enqueue_entity()")
-* 416dd8fc352b ("sched/fair: Fix overflow in vruntime_eligible()")
-
-It also contains the datiscum-specific defensive check in avg_vruntime():
-
-	if (unlikely(weight <= 0))
-		delta = curr ? entity_key(cfs_rq, curr) : 0;
-
-The fallback prevents a zero or negative divisor after inconsistent or
-wrapped weight accounting.  It deliberately continues through
-update_zero_vruntime(), avoiding both a divide-by-zero panic and an invalid
-vruntime jump.
-
-This fixes the scheduler failure path observed before these patches.  That
-failure could result in a kernel panic, soft or hard lockups, RCU stalls, or
-tasks no longer receiving CPU time.  The fix is particularly relevant to
-heavily parallel hosts with many CPU cores, where scheduler failures have a
-large system-wide impact.  It addresses this specific accounting failure; it
-is not a claim to fix unrelated causes of lockups or RCU stalls.
-
-The affected production machine uses two AMD EPYC 7643 48-Core Processors,
-for 96 physical CPU cores in total.  Before the scheduler patches it exhibited
-the failures described above; with the patched kernel it has operated stably
-without those scheduler crashes and lockups.  This is the observed result on
-that system rather than a general guarantee for unrelated hardware or failure
-paths.
-
-The scheduler series additionally prevents try_steal_cookie() from migrating
-an rq->donor task that is still the active proxy-execution context.
+The complete scheduler failure analysis, the Linux 7.1 backports, the local
+avg_vruntime() divide-by-zero guard, the proxy-execution donor protection, and
+the observed production result are documented in README.
 
 Intel Xe stability
 ------------------
@@ -135,5 +106,10 @@ Validation
 The complete patch series was applied without rejects to a clean v6.18.40
 tree.  The resulting source files were compared byte-for-byte with the
 previously prepared local Linux 6.18.40 tree.  The only subsequent source
-cleanup removed two trailing blank lines reported by git diff --check.  No
-kernel compilation was run as part of this repository import.
+cleanup removed two trailing blank lines reported by git diff --check.
+
+After correcting two Linux 6.18 compatibility issues in the additional Xe
+backports, xe_guc_capture.o, xe_pt.o, and the complete
+drivers/gpu/drm/xe/ subtree through xe.o compiled successfully.  The full
+kernel and Debian package build was not continued as part of that targeted
+verification.
