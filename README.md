@@ -551,3 +551,30 @@ lockups, and RCU stalls.
 This is the observed result on this specific 48-core/96-thread production
 server. It is not a claim that the patches fix every possible cause of a
 kernel lockup or RCU stall.
+
+## Intel Xe backports and runtime power requirement
+
+This branch contains selected Intel Xe and TTM stability backports, including
+Battlemage D3Cold handling and fixes for execution recovery, GuC handling,
+page tables, dma-buf lifetime, WOPCM sizing, and GT resume failures.
+
+The tested graphics card is an Intel Arc(TM) Pro B60 Graphics based on the
+Battlemage BMG G21 GPU. It is assigned to a KVM virtual machine through VFIO.
+
+If the device fails, the virtual machine enters the paused state and must be
+forcibly powered off.
+
+Even with the Xe backports applied, the PCI runtime power policy must be
+forced to `on`:
+
+```bash
+echo on > /sys/bus/pci/devices/0000:04:00.0/power/control
+```
+
+This command must be executed after the Xe driver has been loaded and
+initialized. Otherwise, the Xe driver sets the runtime power policy back to
+`auto`.
+
+Keeping the policy set to `on` prevents runtime suspension and avoids the
+observed device failure. This requirement applies to the tested Intel
+Arc(TM) Pro B60 Graphics (BMG G21) at PCI address `0000:04:00.0`.
