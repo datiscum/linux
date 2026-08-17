@@ -783,12 +783,9 @@ void update_zero_vruntime(struct cfs_rq *cfs_rq, s64 delta)
  * This means it is one entry 'behind' but that puts it close enough to where
  * the bound on entity_key() is at most two lag bounds.
  */
-static atomic_t avg_vruntime_invalid_weight_events = ATOMIC_INIT(0);
-
 u64 avg_vruntime(struct cfs_rq *cfs_rq)
 {
-	struct sched_entity *cfs_curr = cfs_rq->curr;
-	struct sched_entity *curr = cfs_curr;
+	struct sched_entity *curr = cfs_rq->curr;
 	long weight = cfs_rq->sum_weight;
 	s64 delta = 0;
 
@@ -797,22 +794,11 @@ u64 avg_vruntime(struct cfs_rq *cfs_rq)
 
 	if (weight) {
 		s64 runtime = cfs_rq->sum_w_vruntime;
-		s64 runtime_before = runtime;
-		s64 curr_key = 0;
-		long weight_before = weight;
-		unsigned long curr_load_weight = 0;
-		unsigned long curr_avg_weight = 0;
-		bool curr_contributed = false;
 
 		if (curr) {
 			unsigned long w = avg_vruntime_weight(cfs_rq, curr->load.weight);
 
-			curr_load_weight = curr->load.weight;
-			curr_avg_weight = w;
-			curr_key = entity_key(cfs_rq, curr);
-			curr_contributed = true;
-
-			runtime += curr_key * w;
+			runtime += entity_key(cfs_rq, curr) * w;
 			weight += w;
 		}
 
@@ -825,67 +811,28 @@ u64 avg_vruntime(struct cfs_rq *cfs_rq)
 		 * reference point.
 		 */
 		if (unlikely(weight <= 0)) {
-			struct task_struct *cfs_curr_task = NULL;
-			const char *cfs_curr_type = "none";
-			const char *cfs_curr_comm = "<none>";
-			pid_t cfs_curr_pid = -1;
-			pid_t cfs_curr_tgid = -1;
-			int event;
+			struct sched_entity *cfs_curr = cfs_rq->curr;
+			struct task_struct *p =
+				cfs_curr && entity_is_task(cfs_curr) ?
+					task_of(cfs_curr) : NULL;
 
-			if (cfs_curr && !curr_contributed) {
-				curr_load_weight = cfs_curr->load.weight;
-				curr_avg_weight = avg_vruntime_weight(cfs_rq,
-								      cfs_curr->load.weight);
-				curr_key = entity_key(cfs_rq, cfs_curr);
-			}
-
-			if (cfs_curr) {
-				if (entity_is_task(cfs_curr)) {
-					cfs_curr_task = task_of(cfs_curr);
-					cfs_curr_type = "task";
-					cfs_curr_comm = cfs_curr_task->comm;
-					cfs_curr_pid = task_pid_nr(cfs_curr_task);
-					cfs_curr_tgid = task_tgid_nr(cfs_curr_task);
-				} else {
-					cfs_curr_type = "group";
-					cfs_curr_comm = "<group>";
-				}
-			}
-
-			event = atomic_inc_return(&avg_vruntime_invalid_weight_events);
 			printk_deferred(KERN_ERR
-				"sched: %s invalid weight event=%d\n"
-				" cpu=%d\n"
-				" sum_weight_u64=%llu\n"
-				" weight_before_signed=%ld\n"
-				" curr_load_weight=%lu\n"
-				" curr_avg_weight=%lu\n"
-				" weight_after_signed=%ld\n"
-				" runtime_before=%lld\n"
-				" runtime_after=%lld\n"
-				" curr_key=%lld\n"
-				" zero_vruntime=%llu\n"
-				" sum_shift=%u\n"
-				" current_pid=%d\n"
-				" current_tgid=%d\n"
-				" current_comm=%s\n"
-				" cfs_curr_type=%s\n"
-				" cfs_curr_pid=%d\n"
-				" cfs_curr_tgid=%d\n"
-				" cfs_curr_comm=%s\n"
-				" cfs_curr_on_rq=%d\n"
-				" cfs_curr_contributed=%d\n",
-				__func__, event, cpu_of(rq_of(cfs_rq)),
+				"sched: avg_vruntime invalid divisor: "
+				"cpu=%d weight=%ld sum_weight=%llu "
+				"runtime=%lld zero_vruntime=%llu sum_shift=%u "
+				"current=%s[%d/%d] "
+				"cfs_curr=%s:%s[%d/%d] on_rq=%d\n",
+				cpu_of(rq_of(cfs_rq)), weight,
 				(unsigned long long)cfs_rq->sum_weight,
-				weight_before, curr_load_weight, curr_avg_weight,
-				weight, (long long)runtime_before,
-				(long long)runtime, (long long)curr_key,
+				(long long)runtime,
 				(unsigned long long)cfs_rq->zero_vruntime,
-				cfs_rq->sum_shift, task_pid_nr(current),
-				task_tgid_nr(current), current->comm,
-				cfs_curr_type, cfs_curr_pid, cfs_curr_tgid,
-				cfs_curr_comm, cfs_curr ? cfs_curr->on_rq : 0,
-				curr_contributed);
+				cfs_rq->sum_shift, current->comm,
+				task_pid_nr(current), task_tgid_nr(current),
+				p ? "task" : cfs_curr ? "group" : "none",
+				p ? p->comm : cfs_curr ? "<group>" : "<none>",
+				p ? task_pid_nr(p) : -1,
+				p ? task_tgid_nr(p) : -1,
+				cfs_curr ? cfs_curr->on_rq : 0);
 
 			delta = curr ? entity_key(cfs_rq, curr) : 0;
 		} else {
