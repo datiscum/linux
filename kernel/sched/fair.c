@@ -802,11 +802,23 @@ u64 avg_vruntime(struct cfs_rq *cfs_rq)
 			weight += w;
 		}
 
-		/* sign flips effective floor / ceiling */
-		if (runtime < 0)
-			runtime -= (weight - 1);
+		/*
+		 * This must never happen. If it does, the cfs_rq accounting is
+		 * inconsistent or the weight addition wrapped non-positive.
+		 *
+		 * Do not divide by 1 here: that could turn a corrupted runtime
+		 * into a huge vruntime jump. Fall back to the only sane local
+		 * reference point.
+		 */
+		if (unlikely(weight <= 0)) {
+			delta = curr ? entity_key(cfs_rq, curr) : 0;
+		} else {
+			/* sign flips effective floor / ceiling */
+			if (runtime < 0)
+				runtime -= (weight - 1);
 
-		delta = div64_long(runtime, weight);
+			delta = div64_long(runtime, weight);
+		}
 	} else if (curr) {
 		/*
 		 * When there is but one element, it is the average.
