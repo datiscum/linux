@@ -835,6 +835,8 @@ u64 avg_vruntime(struct cfs_rq *cfs_rq)
 				cfs_curr ? cfs_curr->on_rq : 0);
 
 			delta = curr ? entity_key(cfs_rq, curr) : 0;
+		} else if (is_power_of_2((unsigned long)weight)) {
+			delta = runtime >> __ffs((unsigned long)weight);
 		} else {
 			/* sign flips effective floor / ceiling */
 			if (runtime < 0)
@@ -905,20 +907,10 @@ static void update_entity_lag(struct cfs_rq *cfs_rq, struct sched_entity *se)
  * Note: using 'avg_vruntime() > se->vruntime' is inaccurate due
  *       to the loss in precision caused by the division.
  */
-static int vruntime_eligible(struct cfs_rq *cfs_rq, u64 vruntime)
+static __always_inline int
+__vruntime_eligible(s64 avg, long load, u64 zero_vruntime, u64 vruntime)
 {
-	struct sched_entity *curr = cfs_rq->curr;
-	s64 key, avg = cfs_rq->sum_w_vruntime;
-	long load = cfs_rq->sum_weight;
-
-	if (curr && curr->on_rq) {
-		unsigned long weight = avg_vruntime_weight(cfs_rq, curr->load.weight);
-
-		avg += entity_key(cfs_rq, curr) * weight;
-		load += weight;
-	}
-
-	key = vruntime_op(vruntime, "-", cfs_rq->zero_vruntime);
+	s64 key = vruntime_op(vruntime, "-", zero_vruntime);
 
 	/*
 	 * The worst case term for @key includes 'NSEC_TICK * NICE_0_LOAD'
@@ -948,6 +940,22 @@ static int vruntime_eligible(struct cfs_rq *cfs_rq, u64 vruntime)
 #else /* 32bit */
 	return avg >= key * load;
 #endif
+}
+
+static int vruntime_eligible(struct cfs_rq *cfs_rq, u64 vruntime)
+{
+	struct sched_entity *curr = cfs_rq->curr;
+	s64 avg = cfs_rq->sum_w_vruntime;
+	long load = cfs_rq->sum_weight;
+
+	if (curr && curr->on_rq) {
+		unsigned long weight = avg_vruntime_weight(cfs_rq, curr->load.weight);
+
+		avg += entity_key(cfs_rq, curr) * weight;
+		load += weight;
+	}
+
+	return __vruntime_eligible(avg, load, cfs_rq->zero_vruntime, vruntime);
 }
 
 int entity_eligible(struct cfs_rq *cfs_rq, struct sched_entity *se)
@@ -990,32 +998,21 @@ static inline bool __entity_less(struct rb_node *a, const struct rb_node *b)
 	return entity_before(__node_2_se(a), __node_2_se(b));
 }
 
-static inline void __min_vruntime_update(struct sched_entity *se, struct rb_node *node)
+static inline void __eevdf_aug_update(struct sched_entity *se, struct rb_node *node)
 {
-	if (node) {
-		struct sched_entity *rse = __node_2_se(node);
+	struct sched_entity *rse;
 
-		if (vruntime_cmp(se->min_vruntime, ">", rse->min_vruntime))
-			se->min_vruntime = rse->min_vruntime;
-	}
-}
+	if (!node)
+		return;
 
-static inline void __min_slice_update(struct sched_entity *se, struct rb_node *node)
-{
-	if (node) {
-		struct sched_entity *rse = __node_2_se(node);
-		if (rse->min_slice < se->min_slice)
-			se->min_slice = rse->min_slice;
-	}
-}
+	rse = __node_2_se(node);
 
-static inline void __max_slice_update(struct sched_entity *se, struct rb_node *node)
-{
-	if (node) {
-		struct sched_entity *rse = __node_2_se(node);
-		if (rse->max_slice > se->max_slice)
-			se->max_slice = rse->max_slice;
-	}
+	if (vruntime_cmp(se->min_vruntime, ">", rse->min_vruntime))
+		se->min_vruntime = rse->min_vruntime;
+	if (rse->min_slice < se->min_slice)
+		se->min_slice = rse->min_slice;
+	if (rse->max_slice > se->max_slice)
+		se->max_slice = rse->max_slice;
 }
 
 /*
@@ -1029,16 +1026,11 @@ static inline bool min_vruntime_update(struct sched_entity *se, bool exit)
 	struct rb_node *node = &se->run_node;
 
 	se->min_vruntime = se->vruntime;
-	__min_vruntime_update(se, node->rb_right);
-	__min_vruntime_update(se, node->rb_left);
-
 	se->min_slice = se->slice;
-	__min_slice_update(se, node->rb_right);
-	__min_slice_update(se, node->rb_left);
-
 	se->max_slice = se->slice;
-	__max_slice_update(se, node->rb_right);
-	__max_slice_update(se, node->rb_left);
+
+	__eevdf_aug_update(se, node->rb_right);
+	__eevdf_aug_update(se, node->rb_left);
 
 	return se->min_vruntime == old_min_vruntime &&
 	       se->min_slice == old_min_slice &&
@@ -1153,6 +1145,9 @@ static struct sched_entity *pick_eevdf(struct cfs_rq *cfs_rq, bool protect)
 	struct sched_entity *se = __pick_first_entity(cfs_rq);
 	struct sched_entity *curr = cfs_rq->curr;
 	struct sched_entity *best = NULL;
+	s64 elig_avg;
+	long elig_load;
+	u64 elig_zero;
 
 	/*
 	 * We can safely skip eligibility check if there is only one entity
@@ -1162,23 +1157,39 @@ static struct sched_entity *pick_eevdf(struct cfs_rq *cfs_rq, bool protect)
 		return curr && curr->on_rq ? curr : se;
 
 	/*
+	 * The eligibility basis is invariant for this pick. Build it once
+	 * instead of rebuilding it for every node visited below.
+	 */
+	elig_avg = cfs_rq->sum_w_vruntime;
+	elig_load = cfs_rq->sum_weight;
+	elig_zero = cfs_rq->zero_vruntime;
+	if (curr && curr->on_rq) {
+		unsigned long weight = avg_vruntime_weight(cfs_rq, curr->load.weight);
+
+		elig_avg += entity_key(cfs_rq, curr) * weight;
+		elig_load += weight;
+	}
+
+	/*
 	 * Picking the ->next buddy will affect latency but not fairness.
 	 */
-	if (sched_feat(PICK_BUDDY) &&
-	    cfs_rq->next && entity_eligible(cfs_rq, cfs_rq->next)) {
+	if (sched_feat(PICK_BUDDY) && cfs_rq->next &&
+	    __vruntime_eligible(elig_avg, elig_load, elig_zero,
+				cfs_rq->next->vruntime)) {
 		/* ->next will never be delayed */
 		WARN_ON_ONCE(cfs_rq->next->sched_delayed);
 		return cfs_rq->next;
 	}
 
-	if (curr && (!curr->on_rq || !entity_eligible(cfs_rq, curr)))
+	if (curr && (!curr->on_rq ||
+	    !__vruntime_eligible(elig_avg, elig_load, elig_zero, curr->vruntime)))
 		curr = NULL;
 
 	if (curr && protect && protect_slice(curr))
 		return curr;
 
 	/* Pick the leftmost entity if it's eligible */
-	if (se && entity_eligible(cfs_rq, se)) {
+	if (se && __vruntime_eligible(elig_avg, elig_load, elig_zero, se->vruntime)) {
 		best = se;
 		goto found;
 	}
@@ -1191,8 +1202,8 @@ static struct sched_entity *pick_eevdf(struct cfs_rq *cfs_rq, bool protect)
 		 * Eligible entities in left subtree are always better
 		 * choices, since they have earlier deadlines.
 		 */
-		if (left && vruntime_eligible(cfs_rq,
-					__node_2_se(left)->min_vruntime)) {
+		if (left && __vruntime_eligible(elig_avg, elig_load, elig_zero,
+					       __node_2_se(left)->min_vruntime)) {
 			node = left;
 			continue;
 		}
@@ -1204,7 +1215,7 @@ static struct sched_entity *pick_eevdf(struct cfs_rq *cfs_rq, bool protect)
 		 * entity, so check the current node since it is the one
 		 * with earliest deadline that might be eligible.
 		 */
-		if (entity_eligible(cfs_rq, se)) {
+		if (__vruntime_eligible(elig_avg, elig_load, elig_zero, se->vruntime)) {
 			best = se;
 			break;
 		}
@@ -4060,7 +4071,8 @@ rescale_entity(struct sched_entity *se, unsigned long weight, bool rel_vprot)
 	 *	   = V  - vl * w / w'
 	 *	   = V  - vl'
 	 */
-	se->vlag = div64_long(se->vlag * old_weight, weight);
+	if (se->vlag)
+		se->vlag = div64_long(se->vlag * old_weight, weight);
 
 	/*
 	 * DEADLINE
@@ -4074,10 +4086,10 @@ rescale_entity(struct sched_entity *se, unsigned long weight, bool rel_vprot)
 	 *	   = V  - (V - v)*w/w' + (d - v)*w/w'
 	 *	   = V  + (d - V)*w/w'
 	 */
-	if (se->rel_deadline)
+	if (se->rel_deadline && se->deadline)
 		se->deadline = div64_long(se->deadline * old_weight, weight);
 
-	if (rel_vprot)
+	if (rel_vprot && se->vprot)
 		se->vprot = div64_long(se->vprot * old_weight, weight);
 }
 
@@ -4128,6 +4140,41 @@ static void reweight_entity(struct cfs_rq *cfs_rq, struct sched_entity *se,
 		if (!curr)
 			__enqueue_entity(cfs_rq, se);
 		cfs_rq->nr_queued++;
+	}
+}
+
+/*
+ * Fast path for enqueue_entity() after DO_ATTACH. The entity contribution is
+ * already present in cfs_rq->avg, so replace only the weight-dependent delta
+ * instead of dequeueing and enqueueing the complete PELT contribution.
+ */
+static void reweight_entity_just_attached(struct cfs_rq *cfs_rq,
+					  struct sched_entity *se,
+					  unsigned long weight)
+{
+	unsigned long old_load_avg = se->avg.load_avg;
+	u64 old_load_sum = se_weight(se) * se->avg.load_sum;
+	u64 new_load_sum;
+	u32 divider;
+
+	rescale_entity(se, weight, false);
+	update_load_set(&se->load, weight);
+
+	divider = get_pelt_divider(&se->avg);
+	se->avg.load_avg = div_u64(se_weight(se) * se->avg.load_sum, divider);
+	new_load_sum = se_weight(se) * se->avg.load_sum;
+
+	if (se->avg.load_avg >= old_load_avg)
+		cfs_rq->avg.load_avg += se->avg.load_avg - old_load_avg;
+	else
+		sub_positive(&cfs_rq->avg.load_avg, old_load_avg - se->avg.load_avg);
+
+	if (new_load_sum >= old_load_sum) {
+		cfs_rq->avg.load_sum += new_load_sum - old_load_sum;
+	} else {
+		sub_positive(&cfs_rq->avg.load_sum, old_load_sum - new_load_sum);
+		cfs_rq->avg.load_sum = max_t(u32, cfs_rq->avg.load_sum,
+						cfs_rq->avg.load_avg * PELT_MIN_DIVIDER);
 	}
 }
 
@@ -4233,9 +4280,13 @@ static long calc_group_shares(struct cfs_rq *cfs_rq)
 	tg_weight -= cfs_rq->tg_load_avg_contrib;
 	tg_weight += load;
 
-	shares = (tg_shares * load);
-	if (tg_weight)
-		shares /= tg_weight;
+	if (tg_weight == load && load) {
+		shares = tg_shares;
+	} else {
+		shares = tg_shares * load;
+		if (tg_weight)
+			shares /= tg_weight;
+	}
 
 	/*
 	 * MIN_SHARES has to be unscaled here to support per-CPU partitioning
@@ -4256,7 +4307,7 @@ static long calc_group_shares(struct cfs_rq *cfs_rq)
  * Recomputes the group entity based on the current state of its group
  * runqueue.
  */
-static void update_cfs_group(struct sched_entity *se)
+static void __update_cfs_group(struct sched_entity *se, bool just_attached)
 {
 	struct cfs_rq *gcfs_rq = group_cfs_rq(se);
 	long shares;
@@ -4269,12 +4320,30 @@ static void update_cfs_group(struct sched_entity *se)
 		return;
 
 	shares = calc_group_shares(gcfs_rq);
-	if (unlikely(se->load.weight != shares))
-		reweight_entity(cfs_rq_of(se), se, shares);
+	if (unlikely(se->load.weight != shares)) {
+		if (just_attached && !se->on_rq)
+			reweight_entity_just_attached(cfs_rq_of(se), se, shares);
+		else
+			reweight_entity(cfs_rq_of(se), se, shares);
+	}
+}
+
+static void update_cfs_group(struct sched_entity *se)
+{
+	__update_cfs_group(se, false);
+}
+
+static void update_cfs_group_enqueue(struct sched_entity *se, bool just_attached)
+{
+	__update_cfs_group(se, just_attached);
 }
 
 #else /* !CONFIG_FAIR_GROUP_SCHED: */
 static inline void update_cfs_group(struct sched_entity *se)
+{
+}
+
+static inline void update_cfs_group_enqueue(struct sched_entity *se, bool just_attached)
 {
 }
 #endif /* !CONFIG_FAIR_GROUP_SCHED */
@@ -5444,7 +5513,6 @@ place_entity(struct cfs_rq *cfs_rq, struct sched_entity *se, int flags)
 
 	if (!se->custom_slice)
 		se->slice = sysctl_sched_base_slice;
-	vslice = calc_delta_fair(se->slice, se);
 
 	/*
 	 * Due to how V is constructed as the weighted average of entities,
@@ -5557,6 +5625,8 @@ place_entity(struct cfs_rq *cfs_rq, struct sched_entity *se, int flags)
 		return;
 	}
 
+	vslice = calc_delta_fair(se->slice, se);
+
 	/*
 	 * When joining the competition; the existing tasks will be,
 	 * on average, halfway through their slice, as such start tasks
@@ -5580,6 +5650,7 @@ requeue_delayed_entity(struct sched_entity *se);
 static void
 enqueue_entity(struct cfs_rq *cfs_rq, struct sched_entity *se, int flags)
 {
+	bool just_attached = !se->avg.last_update_time;
 	bool curr = cfs_rq->curr == se;
 
 	/*
@@ -5602,12 +5673,7 @@ enqueue_entity(struct cfs_rq *cfs_rq, struct sched_entity *se, int flags)
 	 */
 	update_load_avg(cfs_rq, se, UPDATE_TG | DO_ATTACH);
 	se_update_runnable(se);
-	/*
-	 * XXX update_load_avg() above will have attached us to the pelt sum;
-	 * but update_cfs_group() here will re-adjust the weight and have to
-	 * undo/redo all that. Seems wasteful.
-	 */
-	update_cfs_group(se);
+	update_cfs_group_enqueue(se, just_attached);
 
 	/*
 	 * XXX now that the entity has been re-weighted, and it's lag adjusted,
@@ -5861,17 +5927,19 @@ static bool check_cfs_rq_runtime(struct cfs_rq *cfs_rq);
 
 static void put_prev_entity(struct cfs_rq *cfs_rq, struct sched_entity *prev)
 {
+	bool on_rq = prev->on_rq;
+
 	/*
 	 * If still on the runqueue then deactivate_task()
 	 * was not called and update_curr() has to be done:
 	 */
-	if (prev->on_rq)
+	if (on_rq)
 		update_curr(cfs_rq);
 
 	/* throttle cfs_rqs exceeding runtime */
 	check_cfs_rq_runtime(cfs_rq);
 
-	if (prev->on_rq) {
+	if (on_rq) {
 		update_stats_wait_start_fair(cfs_rq, prev);
 		/* Put 'current' back into the tree. */
 		__enqueue_entity(cfs_rq, prev);
