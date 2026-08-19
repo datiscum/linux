@@ -1361,7 +1361,7 @@ struct task_struct {
 	struct list_head		perf_event_list;
 	struct perf_ctx_data __rcu	*perf_ctx_data;
 #endif
-	struct task_ipi_mask		ipi_mask;
+	struct task_ipi_mask		__private ipi_mask;
 #ifdef CONFIG_DEBUG_PREEMPT
 	unsigned long			preempt_disable_ip;
 #endif

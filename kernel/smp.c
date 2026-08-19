@@ -796,9 +796,9 @@ int smp_task_ipi_mask_alloc(struct task_struct *task)
 	if (static_branch_unlikely(&ipi_mask_inlined))
 		return 0;
 
-	task->ipi_mask.ipi_mask_ptr =
+	ACCESS_PRIVATE(task, ipi_mask).ipi_mask_ptr =
 		kmalloc(cpumask_size(), GFP_KERNEL);
-	if (!task->ipi_mask.ipi_mask_ptr)
+	if (!ACCESS_PRIVATE(task, ipi_mask).ipi_mask_ptr)
 		return -ENOMEM;
 
 	return 0;
@@ -809,7 +809,7 @@ void smp_task_ipi_mask_free(struct task_struct *task)
 	if (static_branch_unlikely(&ipi_mask_inlined))
 		return;
 
-	kfree(task->ipi_mask.ipi_mask_ptr);
+	kfree(ACCESS_PRIVATE(task, ipi_mask).ipi_mask_ptr);
 }
 
 static cpumask_t *smp_task_ipi_mask(struct task_struct *cur)
@@ -820,9 +820,9 @@ static cpumask_t *smp_task_ipi_mask(struct task_struct *cur)
 	 * avoid extra memory allocations.
 	 */
 	if (static_branch_unlikely(&ipi_mask_inlined))
-		return (cpumask_t *)&cur->ipi_mask.ipi_mask_val;
+		return (cpumask_t *)&ACCESS_PRIVATE(cur, ipi_mask).ipi_mask_val;
 
-	return cur->ipi_mask.ipi_mask_ptr;
+	return ACCESS_PRIVATE(cur, ipi_mask).ipi_mask_ptr;
 }
 #else
 static cpumask_t *smp_task_ipi_mask(struct task_struct *cur)
