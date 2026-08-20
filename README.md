@@ -492,127 +492,6 @@ not guarantee a valid divisor in `avg_vruntime()`.
 The crashes continued until the complete scheduler patch series and the local
 `weight <= 0` protection were installed.
 
-## Proxy-execution donor protection
-
-Linux 6.17 introduced the first upstream version of Proxy Execution. Proxy
-Execution allows a task waiting for a mutex to donate its scheduling context
-to the task currently holding that mutex.
-
-This separates two scheduler roles:
-
-* `rq->donor` identifies the scheduling context whose priority, runtime and
-  scheduling position are being used.
-* `rq->curr` identifies the task that is physically executing on the CPU,
-  normally the mutex owner making progress on behalf of the donor.
-
-The upstream Linux 6.17 implementation was explicitly described as an initial
-version. It was limited to a single runqueue, depended on `CONFIG_EXPERT`, and
-still had other known limitations.
-
-Original upstream sources:
-
-* Linux 6.17 Proxy Execution patch series:
-  https://lore.kernel.org/lkml/20250712033407.2383110-1-jstultz@google.com/
-* Introduction of `CONFIG_SCHED_PROXY_EXEC` and the boot parameter:
-  https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/commit/?id=25c411fce735dda29de26f58d3fce52d4824380c
-* Initial `find_proxy_task()` implementation:
-  https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/commit/?id=be41bde4c3a86de4be5cd3d1ca613e24664e68dc
-* Initial blocked-owner chain processing:
-  https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/commit/?id=7de9d4f946383f48ec393b6e9ad0c20e49e174e7
-
-### Core-scheduling donor protection
-
-The Datiscum branch contains an additional local protection for the active
-Proxy Execution donor in `try_steal_cookie()`.
-
-When core scheduling is active, `try_steal_cookie()` searches another
-runqueue for a task with a compatible core-scheduling cookie and may migrate
-that task to the destination runqueue.
-
-The original check protected only `src->core_pick` and `src->curr`:
-
-```c
-if (p == src->core_pick || p == src->curr)
-        goto next;
-```
-
-That check did not protect `src->donor`.
-
-When Proxy Execution is active, `src->donor` remains the active scheduling
-context even if a different task is physically executing as `src->curr`.
-Migrating the donor to another runqueue while the source runqueue still
-references it as its donor can leave the scheduling state inconsistent.
-
-The relevant observed scheduler path was:
-
-```text
-sched_core_balance()
-  -> steal_cookie_task()
-     -> try_steal_cookie()
-        -> double_rq_lock()
-           -> raw_spin_rq_lock()
-```
-
-The local patch therefore excludes the donor from the tasks that
-`try_steal_cookie()` is allowed to migrate:
-
-```c
-if (p == src->core_pick || p == src->curr || p == src->donor)
-        goto next;
-```
-
-Datiscum patch:
-
-* Commit:
-  https://github.com/datiscum/linux/commit/186487f0fcfff822acb9c032e3f61ccd66ec4954
-* Patch:
-  https://github.com/datiscum/linux/commit/186487f0fcfff822acb9c032e3f61ccd66ec4954.patch
-
-This is a local Datiscum scheduler patch. It is not one of the Linux 7.1
-scheduler overflow backports described above.
-
-### Scope and limitations
-
-This donor-protection patch is deliberately small and is **not a complete
-Proxy Execution patch set**.
-
-It protects only the specific core-scheduling migration path in
-`try_steal_cookie()`. It does not implement general cross-runqueue donor
-migration, does not complete the unfinished parts of Proxy Execution, and
-must not be interpreted as fixing every possible Proxy Execution race,
-migration problem, locking problem or scheduler-class interaction.
-
-The Linux 6.18 implementation is still based on the initial single-runqueue
-Proxy Execution work. Its own source contains comments explaining that proxy
-migration is not implemented yet.
-
-Later donor-migration development requires extensive changes across the
-scheduler, mutex code, task state tracking, fair scheduling, real-time
-scheduling and deadline scheduling. The later development series also
-documents unresolved crashes, accounting problems, scheduler-class
-interactions and performance regressions.
-
-Relevant follow-up work:
-
-* Simple Donor Migration for Proxy Execution, v25:
-  https://patchew.org/linux/20260313023022.2902479-1-jstultz@google.com/
-* Full development branch referenced by that series:
-  https://github.com/johnstultz-work/linux-dev/commits/proxy-exec-v25-7.0-rc3/
-
-Those later patch sets are not included in this Datiscum branch.
-
-### Disabling Proxy Execution
-
-When `CONFIG_SCHED_PROXY_EXEC=y` is selected, Proxy Execution is compiled in
-and enabled by default.
-
-It can be disabled for an entire boot without rebuilding the kernel by adding
-the following parameter to the kernel command line:
-
-```text
-sched_proxy_exec=0
-```
-
 ## Observed result
 
 Before the complete scheduler fixes, the production server normally ran for
@@ -629,11 +508,10 @@ up.
 Finding the common cause required approximately six months of repeated
 testing, stack-trace analysis, incomplete fixes, and production failures.
 
-With the three Linux 7.1 scheduler backports, the local defensive
-`avg_vruntime()` check, and the proxy-execution donor protection installed,
-the affected AMD EPYC 7643 system has operated stably without the previously
-observed scheduler divide-by-zero panics, scheduler starvation, soft or hard
-lockups, and RCU stalls.
+With the three Linux 7.1 scheduler backports and the local defensive
+`avg_vruntime()` check installed, the affected AMD EPYC 7643 system has
+operated stably without the previously observed scheduler divide-by-zero
+panics, scheduler starvation, soft or hard lockups, and RCU stalls.
 
 This is the observed result on this specific 48-core/96-thread production
 server. It is not a claim that the patches fix every possible cause of a
