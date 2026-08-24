@@ -262,6 +262,45 @@ static inline bool prio_less(const struct task_struct *a,
 	return false;
 }
 
+static inline bool sched_core_is_ksoftirqd(const struct task_struct *p)
+{
+	/*
+	 * Keep an explicitly assigned cookie authoritative.  The special case
+	 * is only for the normal uncookied per-CPU ksoftirqd.
+	 */
+	return !p->core_cookie && p == per_cpu(ksoftirqd, task_cpu(p));
+}
+
+/*
+ * Compare two regular local picks while choosing the core-wide winner.
+ *
+ * Core scheduling normally chooses the highest-priority local pick and then
+ * forces incompatible siblings idle.  If ksoftirqd is itself the regular
+ * FAIR pick of one sibling, allowing a different cookied FAIR task to win can
+ * unnecessarily defer already-pending softirq work.
+ *
+ * Do not make the tasks cookie-compatible.  Instead, for this one conflict,
+ * let the already-selected ksoftirqd become the core-wide winner.  The normal
+ * cookie matching below will then force the incompatible cookied sibling idle
+ * while ksoftirqd runs.
+ */
+static inline bool sched_core_prio_less(const struct task_struct *a,
+					const struct task_struct *b, bool in_fi)
+{
+	if (sched_feat(CORE_KSOFTIRQD_PRIO) &&
+	    a->core_cookie != b->core_cookie &&
+	    __task_prio(a) == MAX_RT_PRIO + MAX_NICE &&
+	    __task_prio(b) == MAX_RT_PRIO + MAX_NICE) {
+		bool a_ksoftirqd = sched_core_is_ksoftirqd(a);
+		bool b_ksoftirqd = sched_core_is_ksoftirqd(b);
+
+		if (a_ksoftirqd != b_ksoftirqd)
+			return b_ksoftirqd;
+	}
+
+	return prio_less(a, b, in_fi);
+}
+
 static inline bool __sched_core_less(const struct task_struct *a,
 				     const struct task_struct *b)
 {
@@ -342,6 +381,36 @@ static int sched_task_is_throttled(struct task_struct *p, int cpu)
 	return 0;
 }
 
+/*
+ * A sibling core-wide pick must not displace a correctly running ksoftirqd
+ * solely because the selected core cookie would otherwise force its CPU idle.
+ *
+ * Keep this exception deliberately narrow: only a remote rq is eligible, both
+ * the regular pick and current ksoftirqd must be ordinary FAIR tasks, and the
+ * current ksoftirqd must still be runnable, unthrottled, and have neither a
+ * normal nor lazy reschedule request.  A local scheduling decision on the
+ * ksoftirqd CPU therefore retains normal CFS authority.
+ */
+static inline bool
+sched_core_keep_remote_ksoftirqd(struct rq *origin, struct rq *rq_i,
+				 struct task_struct *pick)
+{
+	struct task_struct *curr = rq_i->curr;
+
+	return rq_i != origin &&
+	       pick != curr &&
+	       pick->sched_class == &fair_sched_class &&
+	       __task_prio(pick) == MAX_RT_PRIO + MAX_NICE &&
+	       sched_core_is_ksoftirqd(curr) &&
+	       curr->sched_class == &fair_sched_class &&
+	       curr->policy == SCHED_NORMAL &&
+	       __task_prio(curr) == MAX_RT_PRIO + MAX_NICE &&
+	       task_is_runnable(curr) &&
+	       !test_tsk_need_resched(curr) &&
+	       !test_tsk_thread_flag(curr, TIF_NEED_RESCHED_LAZY) &&
+	       !sched_task_is_throttled(curr, cpu_of(rq_i));
+}
+
 static struct task_struct *sched_core_next(struct task_struct *p, unsigned long cookie)
 {
 	struct rb_node *node = &p->core_node;
@@ -379,6 +448,23 @@ static struct task_struct *sched_core_find(struct rq *rq, unsigned long cookie)
 		return p;
 
 	return sched_core_next(p, cookie);
+}
+
+static inline bool cookie_equals(struct task_struct *a, unsigned long cookie);
+
+/*
+ * Return true when the normal cookie-matching pass would select the idle task
+ * for @rq: the regular pick is incompatible and there is no runnable task for
+ * a non-zero selected cookie.
+ */
+static inline bool sched_core_pick_would_force_idle(struct rq *rq,
+						    struct task_struct *pick,
+						    unsigned long cookie)
+{
+	if (cookie_equals(pick, cookie))
+		return false;
+
+	return !cookie || !sched_core_find(rq, cookie);
 }
 
 /*
@@ -6058,7 +6144,8 @@ pick_next_task(struct rq *rq, struct task_struct *prev, struct rq_flags *rf)
 	const struct cpumask *smt_mask;
 	bool fi_before = false;
 	bool core_clock_updated = (rq == rq->core);
-	unsigned long cookie;
+	bool keep_remote_ksoftirqd = false;
+	unsigned long cookie, normal_cookie;
 	int i, cpu, occ = 0;
 	struct rq *rq_i;
 	bool need_sync;
@@ -6173,8 +6260,56 @@ pick_next_task(struct rq *rq, struct task_struct *prev, struct rq_flags *rf)
 		rq_i->core_pick = p = pick_task(rq_i);
 		rq_i->core_dl_server = rq_i->dl_server;
 
-		if (!max || prio_less(max, p, fi_before))
+		if (!max || sched_core_prio_less(max, p, fi_before))
 			max = p;
+	}
+
+	/*
+	 * A remote core-wide selection can otherwise force a currently running
+	 * ksoftirqd idle even though that CPU has not requested a local
+	 * reschedule.  Detect only cases where the normal FAIR winner's cookie
+	 * would actually force such a ksoftirqd CPU idle.
+	 */
+	normal_cookie = max->core_cookie;
+	if (sched_feat(CORE_KSOFTIRQD_PRIO) &&
+	    max->sched_class == &fair_sched_class &&
+	    __task_prio(max) == MAX_RT_PRIO + MAX_NICE) {
+		for_each_cpu(i, smt_mask) {
+			rq_i = cpu_rq(i);
+			p = rq_i->core_pick;
+
+			if (!sched_core_keep_remote_ksoftirqd(rq, rq_i, p))
+				continue;
+			if (!sched_core_pick_would_force_idle(rq_i, p, normal_cookie))
+				continue;
+
+			keep_remote_ksoftirqd = true;
+			break;
+		}
+	}
+
+	if (keep_remote_ksoftirqd) {
+		/*
+		 * Select cookie 0 by keeping every eligible remote ksoftirqd that
+		 * would be forced idle by the normal cookie, plus any eligible one
+		 * whose cookied regular pick would become incompatible after the
+		 * switch to cookie 0.  Uncookied compatible FAIR picks retain their
+		 * normal local ordering.
+		 */
+		for_each_cpu(i, smt_mask) {
+			rq_i = cpu_rq(i);
+			p = rq_i->core_pick;
+
+			if (!sched_core_keep_remote_ksoftirqd(rq, rq_i, p))
+				continue;
+			if (!sched_core_pick_would_force_idle(rq_i, p, normal_cookie) &&
+			    !p->core_cookie)
+				continue;
+
+			rq_i->core_pick = rq_i->curr;
+			rq_i->core_dl_server = NULL;
+			max = rq_i->curr;
+		}
 	}
 
 	cookie = rq->core->core_cookie = max->core_cookie;

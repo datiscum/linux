@@ -136,3 +136,17 @@ SCHED_FEAT(LATENCY_WARN, false)
  * Do newidle balancing proportional to its success rate using randomization.
  */
 SCHED_FEAT(NI_RANDOM, true)
+
+#ifdef CONFIG_SCHED_CORE
+/*
+ * Prefer the uncookied per-CPU ksoftirqd over a conflicting FAIR core-cookie
+ * selection.  Besides the regular local ksoftirqd pick, protect a currently
+ * running remote SCHED_NORMAL ksoftirqd only when the selected cookie would
+ * otherwise force its CPU idle and ksoftirqd itself has neither a normal nor
+ * lazy pending reschedule.  Local CFS decisions, higher scheduling classes,
+ * throttling and cookie compatibility retain their normal semantics.
+ *
+ * Keep disabled by default so the policy can be A/B tested at runtime.
+ */
+SCHED_FEAT(CORE_KSOFTIRQD_PRIO, false)
+#endif
