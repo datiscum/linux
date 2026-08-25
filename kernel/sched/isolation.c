@@ -7,6 +7,7 @@
  * Copyright (C) 2017-2018 SUSE, Frederic Weisbecker
  *
  */
+#include <linux/cpuhplock.h>
 #include <linux/sched/isolation.h>
 #include "sched.h"
 
@@ -14,6 +15,7 @@ enum hk_flags {
 	HK_FLAG_DOMAIN		= BIT(HK_TYPE_DOMAIN),
 	HK_FLAG_MANAGED_IRQ	= BIT(HK_TYPE_MANAGED_IRQ),
 	HK_FLAG_KERNEL_NOISE	= BIT(HK_TYPE_KERNEL_NOISE),
+	HK_FLAG_IO_QUEUE	= BIT(HK_TYPE_IO_QUEUE),
 };
 
 DEFINE_STATIC_KEY_FALSE(housekeeping_overridden);
@@ -92,6 +94,11 @@ void __init housekeeping_init(void)
 		return;
 
 	static_branch_enable(&housekeeping_overridden);
+
+	if (housekeeping_enabled(HK_TYPE_IO_QUEUE)) {
+		cpu_hotplug_disable_offlining();
+		pr_info("CPU offlining disabled because isolcpus=io_queue is active\n");
+	}
 
 	if (housekeeping.flags & HK_FLAG_KERNEL_NOISE)
 		sched_tick_offload_init();
@@ -223,6 +230,12 @@ static int __init housekeeping_isolcpus_setup(char *str)
 		if (!strncmp(str, "managed_irq,", 12)) {
 			str += 12;
 			flags |= HK_FLAG_MANAGED_IRQ;
+			continue;
+		}
+
+		if (!strncmp(str, "io_queue,", 9)) {
+			str += 9;
+			flags |= HK_FLAG_IO_QUEUE;
 			continue;
 		}
 
