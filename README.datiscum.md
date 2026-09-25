@@ -1,7 +1,7 @@
-Datiscum Linux 6.18.40
-======================
+Datiscum Linux 6.18.y
+=====================
 
-This branch is based on the official Linux v6.18.40 tag and carries the
+The release branches are based on official Linux 6.18.y tags and carry the
 kernel changes used by the datiscum systems.  The changes are split into
 separate Git commits so that every patch group can be audited or replaced by
 its stable upstream equivalent in later kernel releases.
@@ -37,6 +37,38 @@ the combined bitmap_weighted_or() helper was introduced after the Linux 6.18
 branch.  Commit 8a0fb57675be is intentionally not carried: it fixes purged-BO
 state handling introduced by post-6.18 commit ad9843aac91a, so its prerequisite
 and affected behavior do not exist in Linux 6.18.
+
+NVMe and managed-IRQ housekeeping
+---------------------------------
+
+Commit 8137997d6e0e adds the local ``isolcpus=io_queue`` backport.  It is
+based on the v15 ``blk: honor isolcpus configuration`` series:
+
+https://patchew.org/linux/20260521232956.553287-1-atomlin@atomlin.com/
+
+When ``isolcpus=io_queue,<cpu-list>`` is present, the listed CPUs are excluded
+from I/O-queue housekeeping.  ``group_mask_cpus_evenly()`` builds queue and
+managed-IRQ affinity masks only from the remaining housekeeping CPUs.  The
+blk-mq queue count is limited accordingly, and isolated CPUs share hardware
+queues whose completion interrupts are handled by housekeeping CPUs.  This
+keeps NVMe PCI managed MSI-X completion interrupts off the isolated CPUs.
+
+The implementation is intentionally in the generic blk-mq and managed-IRQ
+paths rather than in the NVMe driver, so other devices using those paths also
+inherit the restriction.  Without ``isolcpus=io_queue``, the existing queue
+and affinity behavior is unchanged.
+
+This backport assumes a fixed CPU topology.  CPU offlining is disabled during
+boot whenever ``isolcpus=io_queue`` is active, avoiding mappings that would
+otherwise become invalid after a housekeeping CPU is taken offline.
+
+For the production CPU layout, the option matching the existing managed-IRQ
+isolation mask is:
+
+	isolcpus=io_queue,8,12-47,56,60-95
+
+The CPUs in this list are the CPUs to isolate from I/O queues; all remaining
+possible CPUs form the I/O-queue housekeeping pool.
 
 Other changes and configuration
 -------------------------------

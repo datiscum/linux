@@ -543,3 +543,36 @@ initialized. Otherwise, the Xe driver sets the runtime power policy back to
 Keeping the policy set to `on` prevents runtime suspension and avoids the
 observed device failure. This requirement applies to the tested Intel
 Arc(TM) Pro B60 Graphics (BMG G21) at PCI address `0000:04:00.0`.
+
+## NVMe and managed-IRQ housekeeping
+
+Commit `8137997d6e0e` adds the local `isolcpus=io_queue` backport. It is
+based on the v15 [`blk: honor isolcpus configuration`](https://patchew.org/linux/20260521232956.553287-1-atomlin@atomlin.com/)
+series.
+
+With `isolcpus=io_queue,<cpu-list>`, the listed CPUs are excluded from
+I/O-queue housekeeping. `group_mask_cpus_evenly()` constructs queue and
+managed-IRQ affinity masks only from the remaining housekeeping CPUs. blk-mq
+also limits the hardware-queue count to the available online housekeeping
+CPUs and maps isolated CPUs onto queues served by those housekeeping CPUs.
+NVMe PCI managed MSI-X completion interrupts therefore do not include the
+isolated CPUs in their affinity masks.
+
+The change is implemented in the generic blk-mq and managed-IRQ paths, not in
+the NVMe driver alone. Other devices using these paths inherit the same
+restriction. Without `isolcpus=io_queue`, queue mapping and IRQ-affinity
+behavior remain unchanged.
+
+This backport deliberately uses a fixed CPU topology. When `io_queue` is
+active, CPU offlining is disabled during boot so that a housekeeping CPU
+cannot disappear after queues and interrupt affinities have been assigned.
+
+For the production CPU layout, the option matching the existing managed-IRQ
+isolation mask is:
+
+```text
+isolcpus=io_queue,8,12-47,56,60-95
+```
+
+The CPUs in that list are excluded from I/O queues. All remaining possible
+CPUs form the I/O-queue housekeeping pool.
