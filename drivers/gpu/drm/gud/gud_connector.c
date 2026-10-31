@@ -390,13 +390,13 @@ static int gud_connector_add_tv_mode(struct gud_device *gdrm, struct drm_connect
 			  connector->index, buf, buf_len);
 	if (ret < 0)
 		goto free;
-	if (!ret || ret % GUD_CONNECTOR_TV_MODE_NAME_LEN) {
+	if (!ret || ret > buf_len || ret % GUD_CONNECTOR_TV_MODE_NAME_LEN) {
 		ret = -EIO;
 		goto free;
 	}
 
 	num_modes = ret / GUD_CONNECTOR_TV_MODE_NAME_LEN;
-	for (i = 0; i < num_modes; i++) {
+	for (i = 0; i < num_modes && i < ARRAY_SIZE(modes); i++) {
 		char *mode = &buf[i * GUD_CONNECTOR_TV_MODE_NAME_LEN];
 
 		if (!memchr(mode, '\0', GUD_CONNECTOR_TV_MODE_NAME_LEN)) {
