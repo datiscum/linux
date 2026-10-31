@@ -576,3 +576,9 @@ isolcpus=io_queue,8,12-47,56,60-95
 
 The CPUs in that list are excluded from I/O queues. All remaining possible
 CPUs form the I/O-queue housekeeping pool.
+
+## Versioned Kernel Sources
+
+The preserved 6.18.55 build sources and the prepared 6.18.60 sources have
+separate branches and tags. See the [version and build records](Documentation/datiscum/versioned-builds.md)
+for their configuration, verification, and separately managed ZFS integration.
