@@ -1,13 +1,14 @@
 # Versioned Kernel Sources
 
-The two versions are retained independently. Updating the 6.18.60 branch
-does not change the 6.18.55 branch or either detached build directory.
+The versions below are retained independently. Updating the latest branch
+does not change earlier version branches or their detached build directories.
 The earlier datiscum branches and their original patch history are retained.
 
 | Kernel | Branch | Tag | Status |
 | --- | --- | --- | --- |
 | 6.18.55-datiscum1 | `linux-6.18.55-datiscum` | `v6.18.55-datiscum1` | Preserved sources of the completed Debian build |
 | 6.18.60 | `linux-6.18.60-datiscum` | `v6.18.60-datiscum-source` | Prepared sources; not built during this synchronization |
+| 6.18.64-datiscum1 | `linux-6.18.64-datiscum` | `v6.18.64-datiscum-source` | Prepared ZFS-integrated build directory; kernel not compiled during preparation |
 
 ## Source Verification
 
@@ -29,12 +30,12 @@ hooks in `fs/Kconfig` and `fs/Makefile`. Those integration hooks are the only
 intentional differences in the tracked Linux code versus the build folders.
 A Git archive alone is therefore not the complete ZFS-integrated build tree.
 
-## Exact LTO Configuration
+## Archived 6.18.55 LTO Configuration
 
-`arch/x86/configs/datiscum_lto_defconfig` contains the exact `.config` used
-for the completed 6.18.55 build. It also matches the unchanged configuration
-in the prepared 6.18.60 directory and the configuration embedded in the
-6.18.55 Debian image package.
+At tag `v6.18.55-datiscum1`, `arch/x86/configs/datiscum_lto_defconfig`
+contains the exact `.config` used for the completed 6.18.55 build. This was
+also the initial configuration copied into the prepared 6.18.60 directory.
+It matches the configuration embedded in the 6.18.55 Debian image package.
 
 SHA256:
 
@@ -42,10 +43,23 @@ SHA256:
 ebcfe4ce71881f259626816367aa4532d8b625c8b8d4988e927040072ac68590
 ```
 
-Settings include O3, x86-64-v3, full Clang LTO, and built-in ZFS. The stored
-configuration is not rewritten by oldconfig during this synchronization;
-it still requires the external ZFS integration when used for that build.
+Settings include O3, x86-64-v3, full Clang LTO, and built-in ZFS. This archived
+configuration was not rewritten by oldconfig during the 6.18.55/6.18.60 Git
+synchronization; it still requires the external ZFS integration for that build.
 The conventional `datiscum_defconfig` is left unchanged.
+
+## Current 6.18.64 LTO Configuration
+
+On branch `linux-6.18.64-datiscum`, the same config path contains the exact
+updated `.config` from `/ADMIN/Github/linux-6.18.64`. Its SHA256 is:
+
+```text
+12a52838abb0f3a7cf530e61484a6a85ea8ea691b14b218ffe22e8e55a059b50
+```
+
+O3, x86-64-v3, full Clang LTO and built-in OpenZFS 2.4.4 remain enabled.
+See the [6.18.64 upgrade record](upgrade-6.18.64.md) for the stable merge,
+configuration changes, and source-preservation checks.
 
 ## Completed 6.18.55 Build
 

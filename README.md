@@ -582,3 +582,7 @@ CPUs form the I/O-queue housekeeping pool.
 The preserved 6.18.55 build sources and the prepared 6.18.60 sources have
 separate branches and tags. See the [version and build records](Documentation/datiscum/versioned-builds.md)
 for their configuration, verification, and separately managed ZFS integration.
+
+The latest prepared sources are `6.18.64-datiscum1` on branch
+`linux-6.18.64-datiscum`. The [6.18.64 upgrade record](Documentation/datiscum/upgrade-6.18.64.md)
+documents the stable merge, preservation checks, and retained ZFS integration.
