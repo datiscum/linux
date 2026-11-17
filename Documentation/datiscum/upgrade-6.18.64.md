@@ -3,7 +3,7 @@
 ## Source History
 
 Branch: `linux-6.18.64-datiscum`.
-Source tag: `v6.18.64-datiscum-source`.
+Initial source tag: `v6.18.64-datiscum-source`.
 Prepared kernel release: `6.18.64-datiscum1`.
 
 The existing custom 6.18.60 history was merged with official stable
@@ -69,14 +69,46 @@ to the detached build copy using `git apply`, after a successful strict
 `/ADMIN/Github/linux-6.18.64`. Only the copy was cleaned and upgraded.
 The existing 6.18.60 build directory remains unchanged.
 
-The 1,171 ZFS files remaining after `make LLVM=1 clean` are SHA256-identical
-to their originals. The 700 removed ZFS files were generated build products
+Before the additional fix below, the 1,171 ZFS files remaining after
+`make LLVM=1 clean` were SHA256-identical to their originals.
+The 700 removed ZFS files were generated build products
 and dependency files. The ZFS Kbuild, generated feature header, and hooks in
 `fs/Kconfig` and `fs/Makefile` remain unchanged. No ZFS reintegration or
 reconfiguration was performed.
 
 ZFS sources remain external to the kernel Git repository as previously
 requested. A Git archive alone is not the ZFS-integrated build directory.
+
+## Additional Kernel-Only ZFS Fix
+
+After the initial source tag, OpenZFS commit
+[`48f048c0b7e831c78e714ad62ac2db2ed5c58e65`](https://github.com/openzfs/zfs/commit/48f048c0b7e831c78e714ad62ac2db2ed5c58e65)
+([PR #19411](https://github.com/openzfs/zfs/pull/19411)) was applied to
+`fs/zfs/icp/algs/modes/gcm.c` in the prepared 6.18.64 build directory.
+
+The single added line records the allocated table size immediately after
+successful allocation in `gcm_init_avx()`:
+
+```c
+ctx->gcm_htab_len = htab_len;
+```
+
+This gives `gcm_clear_ctx()` the correct length when wiping and freeing
+the AVX and AVX2/VAES GCM tables. It changes no userspace interface or pool
+format. The separate ZFS package sources and installed userspace libraries
+remain unchanged; this applies the fix only to the kernel-integrated copy.
+
+The reproducible [backport patch](zfs-backports/0001-gcm-hash-table-allocation-size.patch)
+is tracked here because the integrated ZFS sources themselves remain external.
+Its paths are adapted to the kernel root so it can be applied with `patch -p1`
+after ZFS integration. It is already applied in `/ADMIN/Github/linux-6.18.64`.
+The initial source tag is retained unchanged as the pre-fix snapshot.
+
+The forward check before editing and reverse check afterward passed.
+After path normalization, the patch ID matches the original upstream patch.
+SHA256 comparison confirms that this one-line edit is the only change among
+the 1,171 retained ZFS files; `.config` and `.version` remain unchanged.
+No compilation or runtime testing was performed for this fix.
 
 ## Configuration And Validation Limits
 

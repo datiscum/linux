@@ -1,0 +1,41 @@
+From 48f048c0b7e831c78e714ad62ac2db2ed5c58e65 Mon Sep 17 00:00:00 2001
+From: Kamil Monicz <kamil@monicz.dev>
+Date: Sat, 31 Oct 2026 21:55:47 +0100
+Subject: [PATCH] icp: record the accelerated GCM hash-table allocation size
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+gcm_init_avx() allocates the hash table but leaves gcm_htab_len zero
+in an atomic context. gcm_clear_ctx() uses that field to wipe the
+authentication-subkey table and free its storage, so the wipe is
+skipped and kmem_free() receives the wrong size.
+
+Record the allocated length before initializing the table. This covers
+both the AVX and AVX2/VAES table sizes.
+
+Fixes: bb9225ea86dc
+Reviewed-by: Alexander Motin <alexander.motin@TrueNAS.com>
+Reviewed-by: Attila Fülöp <attila@fueloep.org>
+Signed-off-by: Kamil Monicz <kamil@monicz.dev>
+Closes #19411
+
+Upstream-commit: 48f048c0b7e831c78e714ad62ac2db2ed5c58e65
+Upstream-PR: https://github.com/openzfs/zfs/pull/19411
+Kernel integration: paths adapted from module/icp to fs/zfs/icp.
+---
+ fs/zfs/icp/algs/modes/gcm.c | 1 +
+ 1 file changed, 1 insertion(+)
+
+diff --git a/fs/zfs/icp/algs/modes/gcm.c b/fs/zfs/icp/algs/modes/gcm.c
+index 4332a86d1183..55d025990d60 100644
+--- a/fs/zfs/icp/algs/modes/gcm.c
++++ b/fs/zfs/icp/algs/modes/gcm.c
+@@ -1632,6 +1632,7 @@ gcm_init_avx(gcm_ctx_t *ctx, const uint8_t *iv, size_t iv_len,
+ 	if (ctx->gcm_Htable == NULL) {
+ 		return (CRYPTO_HOST_MEMORY);
+ 	}
++	ctx->gcm_htab_len = htab_len;
+ 
+ 	/* Init H (encrypt zero block) and create the initial counter block. */
+ 	memset(H, 0, sizeof (ctx->gcm_H));
